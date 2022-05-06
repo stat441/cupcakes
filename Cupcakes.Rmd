@@ -1,0 +1,116 @@
+---
+title: "Mixed Models with Cupcakes"
+output: pdf_document 
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+library(tidyverse)
+library(arm)
+library(lme4)
+knitr::opts_chunk$set(echo = TRUE)
+options(mc.cores = parallel::detectCores())
+```
+
+## Pseudoreplication
+
+Consider the simplification of a cupcake dataset that contains measurements of cupcake heights from a designed experiment and assesses differences in height for 375 and 325 degrees.
+
+```{r, message = F}
+cupcakes_q1 <- read_csv('CupcakeHeights.csv') %>% 
+  filter(Temp.F %in% c(325, 375)) %>%
+  dplyr::select(Temp.F, Height.cm)
+```
+
+- __Temp.F:__ temperature of oven
+- __Height.cm__ measured height of cupcake
+
+
+```{r}
+summary(lm(Height.cm ~ factor(Temp.F), data = cupcakes_q1))
+```
+
+This type of analysis results in pseudoreplication. Note the standard error on the contrast term for comparison.
+
+\newpage
+
+## Averaging Models
+
+
+This complete cupcake dataset includes information about the batch number of cupcakes that corresponds to pan the cupcakes were baked in. Cupcakes from the same batch are cooked in the oven together and would likely be correlated. Failing to account for this results in pseudo-replication.
+
+```{r, message = F}
+cupcakes_q2 <- read_csv('CupcakeHeights.csv') %>% 
+  filter(Temp.F %in% c(325, 375)) %>%
+  mutate(Batch = case_when(Batch.Number == 1 & Temp.F == 325 ~ 1,
+                           Batch.Number == 2 & Temp.F == 325 ~ 2,
+                           Batch.Number == 3 & Temp.F == 325 ~ 3,
+                           Batch.Number == 1 & Temp.F == 375 ~ 4,
+                           Batch.Number == 2 & Temp.F == 375 ~ 5,
+                           Batch.Number == 3 & Temp.F == 375 ~ 6)) %>%
+  dplyr::select(Temp.F, Batch, Height.cm)
+```
+
+- __Temp.F:__ temperature of oven
+- __Batch__ identifier for batch of cupcakes (cooked in same pan)
+- __Height.cm__ measured height of cupcake
+
+
+
+```{r}
+cupcakes_q2 %>% 
+  ggplot(aes(x = factor(Batch), y = Height.cm, color = factor(Temp.F), shape = factor(Batch))) + 
+  geom_violin() + theme_bw() + geom_jitter()
+```
+
+Now consider taking the average height of all cupcakes in a batch and analyzing that data.
+
+
+```{r}
+cupcakes_q2 %>% group_by(Batch, Temp.F) %>% 
+  summarize(Height.cm = mean(Height.cm), .groups = 'drop') %>%
+   lm(Height.cm ~  factor(Temp.F), data = .) %>% summary()
+```
+
+Note the difference in the standard error
+
+\newpage
+
+## Hierarchical Models
+
+Finally we can formally account for this by fitting a hierarchical model using `lmer`. Compare the standard error of the hierarchical model with the 
+
+```{r}
+cupcakes_q2 %>% 
+  lmer(Height.cm ~  1 + factor(Temp.F)+ (1 |Batch), data = .) %>%
+  summary()
+
+cupcakes_q2 %>% lm(Height.cm ~factor(Temp.F) , data = .) %>% summary()
+
+cupcakes_q2 %>% group_by(Batch, Temp.F) %>% 
+  summarize(Height.cm = mean(Height.cm), .groups = 'drop') %>%
+   lm(Height.cm ~  factor(Temp.F), data = .) %>% summary()
+```
+
+\newpage
+
+## Model Assumptions
+
+
+Now we will re-examine the residuals from the models fit with the hierarchical model for Batch) and the pseudoreplicated linear model.
+
+
+```{r}
+tibble(resids = cupcakes_q2 %>% 
+  lmer(Height.cm ~  1 + factor(Temp.F)+ (1  |Batch), data = .) %>%
+  residuals(),
+  Batch = factor(cupcakes_q2$Batch)) %>% ggplot(aes(y = resids, x = Batch, color = Batch)) + 
+  geom_violin() + geom_jitter() 
+
+tibble(resids = cupcakes_q2 %>% 
+  lm(Height.cm ~  factor(Temp.F), data = .) %>%
+  residuals(),
+  Batch = factor(cupcakes_q2$Batch)) %>% ggplot(aes(y = resids, x = Batch, color = Batch))  + 
+  geom_violin() + geom_jitter()
+
+```
